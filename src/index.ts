@@ -24,6 +24,11 @@ interface TranslatedContent {
   };
 }
 
+interface TemplatePlaceholder {
+  placeholder: string;
+  template: string;
+}
+
 const program = new Command();
 
 program
@@ -48,6 +53,45 @@ async function checkLibreTranslateAccess(url: string): Promise<boolean> {
   }
 }
 
+function extractTemplates(text: string): {
+  processedText: string;
+  templates: TemplatePlaceholder[];
+} {
+  const templateRegex = /{{[^}]+}}/g;
+  const templates: TemplatePlaceholder[] = [];
+  let counter = 0;
+
+  const processedText = text.replace(templateRegex, (match) => {
+    counter++;
+    // Using a simple numbered placeholder format that's unlikely to be translated
+    const placeholder = `[T${counter}]`;
+    templates.push({ placeholder, template: match });
+    return placeholder;
+  });
+
+  return { processedText, templates };
+}
+
+function restoreTemplates(
+  text: string,
+  templates: TemplatePlaceholder[]
+): string {
+  let restoredText = text;
+
+  // Sort templates by placeholder length (descending) to avoid partial replacements
+  const sortedTemplates = [...templates].sort(
+    (a, b) => b.placeholder.length - a.placeholder.length
+  );
+
+  for (const { placeholder, template } of sortedTemplates) {
+    // Use global replace to handle multiple occurrences
+    const regex = new RegExp(placeholder.replace(/[[\]]/g, "\\$&"), "g");
+    restoredText = restoredText.replace(regex, template);
+  }
+
+  return restoredText;
+}
+
 async function translateText(
   text: string,
   from: string,
@@ -55,15 +99,20 @@ async function translateText(
   apiUrl: string
 ): Promise<string> {
   try {
+    // Extract templates before translation
+    const { processedText, templates } = extractTemplates(text);
+
     const payload: TranslateRequest = {
-      q: text,
+      q: processedText,
       source: from,
       target: to,
     };
 
-    console.log(`Translating text: ${text}`);
     const response = await axios.post(`${apiUrl}/translate`, payload);
-    return response.data.translatedText;
+
+    // Restore templates after translation
+    const finalText = restoreTemplates(response.data.translatedText, templates);
+    return finalText;
   } catch (error) {
     console.error("Translation error:", error);
     throw error;
